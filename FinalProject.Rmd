@@ -1,0 +1,316 @@
+---
+title: "FinalProject"
+author: "Yingfa Gao"
+date: "2023-04-27"
+output: slidy_presentation
+always_allow_html: true
+---
+
+##Library
+```{r}
+library(dplyr)
+library(ggplot2)
+library(leaflet)
+library(stringr)
+library(caret)
+library(corrplot)
+library(reactable)
+library(reactablefmtr)
+library(ggmap)
+library(opencage)
+library(maps)
+library(formattable)
+library(FactoMineR)
+library(factoextra)
+library(plotly)
+
+```
+
+## Introduction
+In this report, we analyze electric vehicle (EV) adoption in Washington State. We explore the distribution of electric vehicles by city, top-selling models, the relationship between model year and electric range, and predicting electric range using model year and electric vehicle type. Furthermore, we visualize the EV adoption through geographical representations using interactive maps. This analysis will help us understand the current state of EV adoption and inform policy-making and infrastructure planning for the future.
+
+
+
+## Load Data
+```{r }
+Ev_Washington <- read.csv("~/Desktop/CSC545/FinalProject/WashingtonEVehicle.csv")
+summary(Ev_Washington)
+```
+## Extra Data
+```{r }
+# Select only the specified columns that are relevant to our analysis
+Ev_Washington <- Ev_Washington[, c("County", "City", "State", "Postal.Code", "Model.Year", "Make", "Model", "Electric.Vehicle.Type", "Electric.Range")]
+
+# Filter out empty/missing data to ensure the accuracy and reliability of the results
+# Select data only for Washington state and exclude rows with Electric.Range equal to 0
+Ev_Washington <- Ev_Washington %>%
+  filter(!is.na(County) & !is.na(City) & !is.na(State) & !is.na(Postal.Code) & !is.na(Model.Year) & !is.na(Make) & !is.na(Model) & !is.na(Electric.Vehicle.Type) & !is.na(Electric.Range)) %>%
+  filter(State == "WA" & Electric.Range != 0)
+
+# Display the first 10 rows of the cleaned dataset to get an overview of the data structure
+head(Ev_Washington, n=10)
+
+```
+
+
+
+## Top 5 cities with the highest EV adoption rate 
+```{r }
+# Calculate EV counts per city
+city_ev_counts <- as.data.frame(table(Ev_Washington$City))
+colnames(city_ev_counts) <- c("City", "EV_Count")
+
+# Find the top 5 cities with the highest EV adoption rate
+top_5_cities <- city_ev_counts %>%
+  arrange(desc(EV_Count)) %>%
+  head(5)
+
+#create a reactable for the top 5 cities with the highest EV adoption rate
+reactable(
+  top_5_cities,
+  defaultColDef = colDef(
+    cell = data_bars(
+      top_5_cities, 
+      box_shadow = TRUE, 
+      round_edges = TRUE,
+      text_position = "outside-base",
+      fill_color = c("#e81cff", "#40c9ff"),
+      background = "#e5e5e5",
+      fill_gradient = TRUE
+    )
+  )
+)
+# The reactable is visually enhanced by using data bars that provide a clear representation of the EV adoption rate in each city. The data bars have a gradient fill, rounded edges, and an outside-base text position for a more appealing look.
+```
+## Top 3 models in top 5 cities
+```{r }
+# Filter the dataset to include only the top 5 cities
+data_top_5_cities <- Ev_Washington %>%
+  filter(City %in% top_5_cities$City)
+
+# Calculate model counts per city
+model_counts_top_5_cities <- data_top_5_cities %>%
+  group_by(City, Make, Model) %>%
+  summarise(Count = n()) %>%
+  ungroup()
+
+# Find the top 3 models in the top 5 cities
+top_3_models_top_5_cities <- model_counts_top_5_cities %>%
+  arrange(desc(Count)) %>%
+  head(10)
+
+# Join the top_3_models_top_5_cities with the original data to get the additional information
+top_models_data <- top_3_models_top_5_cities %>%
+  left_join(Ev_Washington, by = c("City", "Make", "Model")) %>%
+  select(City, Make, Model, `Electric.Vehicle.Type`, `Electric.Range`, `Model.Year`, Count) %>%
+  distinct()
+
+# Apply formattable() function to the top_models_data
+formatted_top_models_data <- formattable(top_models_data, align = "l", list(
+  Make = color_tile("white", "lightblue"),
+  `Electric.Vehicle.Type` = color_tile("white", "lightgreen"),
+  `Electric.Range` = color_tile("white", "lightyellow"),
+  `Model.Year` = color_tile("white", "lightsalmon")
+))
+
+# Display the formatted table
+formatted_top_models_data
+
+```
+## Explore the relationship between model year and electric range 
+```{r }
+# Create a boxplot visualization of the electric range distribution by model year for each type of electric vehicle
+ggplot(Ev_Washington, aes(x = as.factor(Model.Year), y = Electric.Range, fill = Electric.Vehicle.Type)) +
+  geom_boxplot() + # Use boxplot as the type of plot
+  xlab("Model Year") + # Label the x-axis as "Model Year"
+  ylab("Electric Range") + # Label the y-axis as "Electric Range"
+  ggtitle("Boxplot of Electric Range by Model Year") + # Add a title to the plot
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) # Adjust the angle of the x-axis text labels
+
+## It is evident that battery electric vehicles (BEVs) like Tesla and Nissan are in high demand in the market. This can be attributed to their increased range, better performance, and the growing availability of charging infrastructure. Additionally, the shift towards a more environmentally friendly mode of transportation has also contributed to the popularity of BEVs.On the other hand, plug-in hybrid electric vehicles (PHEVs) have experienced slower sales after the introduction of BEVs. PHEVs, which have both an electric motor and an internal combustion engine, offer a compromise between the environmental benefits of electric vehicles and the convenience of gasoline-powered cars. However, with the improvement in battery technology, the range of BEVs has increased significantly, making them more appealing to consumers. Moreover, the overall cost of ownership of BEVs has also become more competitive over time, as battery prices have decreased, and charging infrastructure has expanded.
+```
+## predicting Electric.Range using Model.Year and Electric.Vehicle.Type
+```{r }
+# Set the seed for reproducibility
+set.seed(123)
+
+# Split the data into training and testing datasets
+split_index <- createDataPartition(Ev_Washington$Model.Year, p = 0.8, list = FALSE)
+train_data <- Ev_Washington[split_index, ]
+test_data <- Ev_Washington[-split_index, ]
+
+# Perform a linear regression analysis to predict electric range based on model year and vehicle type
+lm_model <- lm(Electric.Range ~ Model.Year + Electric.Vehicle.Type, data = train_data)
+summary(lm_model)
+
+# Predict electric range for the test dataset
+predictions <- predict(lm_model, test_data)
+
+# Calculate the mean squared error of the predictions
+mse <- mean((test_data$Electric.Range - predictions)^2)
+mse
+
+#Mean Squared Error:The mean squared error (MSE) of the predictions is 2681.455, which measures the average squared difference between the predicted and observed electric range values. The lower the MSE, the better the model's predictive performance.
+
+# Plot the residuals of the linear regression model
+residuals <- resid(lm_model)
+
+ggplot(data.frame(residuals), aes(x = residuals)) +
+  geom_histogram(binwidth = 10, color = "black", fill = "white") +
+  xlab("Residuals") +
+  ylab("Frequency") +
+  ggtitle("Histogram of Residuals")
+
+#Liner Summary Intercept: -2.209e+04, suggesting that the starting point (at year 0) of the electric range is -22090, but this value is not practically meaningful as it is well outside the realistic range of model years.Model.Year: 1.105e+01, suggesting that for every one-unit increase in the model year, the electric range increases by 11.05 units, on average, holding the other variable constant.Electric.Vehicle.TypePlug-in Hybrid Electric Vehicle (PHEV): -1.708e+02, indicating that the plug-in hybrid electric vehicle's electric range is, on average, 170.8 units lower than the battery electric vehicle's range, holding the other variable constant. 
+
+# Create a correlation matrix for the numerical variables in the dataset
+num_vars <- Ev_Washington %>% select(Model.Year, Electric.Range)
+cor_matrix <- cor(num_vars, use = "pairwise.complete.obs")
+cor_matrix
+
+# Visualize the correlation matrix as a heatmap
+corrplot(cor_matrix, method = "color", type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45, addCoef.col = "black", number.cex = 0.7)
+
+#Correlation Matrix: The correlation matrix shows the correlation between Model.Year and Electric.Range is 0.1944, indicating a weak positive relationship between the two variables. This means that as the model year increases, the electric range tends to slightly increase as well.
+
+```
+## Perform PCA for dimensionality reduction
+```{r }
+num_vars <- Ev_Washington %>% select(Model.Year, Electric.Range)
+pca_result <- PCA(num_vars, scale.unit = TRUE, graph = FALSE)
+
+# Visualize PCA results
+fviz_eig(pca_result, addlabels = TRUE, ylim = c(0, 100))
+#PC1 (Dimension 1) explains 59.7% of the total variance. This means that this first principal component captures most of the information or variation in the data, considering both Model.Year and Electric.Range.
+#PC2 (Dimension 2) explains the remaining 40.3% of the total variance. This second principal component captures the remaining variation in the data, which is not explained by PC1.
+```
+## Get the Longitude and Latitude through the zipcode
+```{r }
+# Register your Google API key
+register_google(key = "AIzaSyAPMeflPrVtKhJUU5M2pw1cKTmH-l8YvjQ")
+
+# Filter the Ev_Washington dataset by Washington state
+df_wa <- Ev_Washington
+
+# Aggregate the data by zip code, counting the number of vehicles in each zip code
+vehicle_count_by_zip <- df_wa %>%
+  group_by(Postal.Code) %>%
+  summarise(vehicle_count = n()) %>%
+  ungroup() %>%
+  na.omit()
+
+# List of excluded zip codes
+exclude_zips <- c("98527", "98297", "98326", "98344", "98509", "98533", "98538", "98548", "98575", "98582", "98527", "98533", "98538", "98940", "98853", "98850", "98832", "98673", "98644", "98639", "98617", "98587", "98583","99119","99130","98050")
+
+# Filter out the excluded zip codes from the aggregated dataset
+vehicle_count_by_zip <- vehicle_count_by_zip %>%
+  filter(!Postal.Code %in% exclude_zips)
+
+# Add geocoding information to the vehicle_count_by_zip dataset
+vehicle_count_by_zip <- vehicle_count_by_zip %>%
+
+# Use the geocode function to get the latitude and longitude for each Postal Code
+mutate(location = geocode(as.character(Postal.Code)), 
+         # Add a new column 'longitudes' and assign the longitude values from the 'location' column
+         longitudes = location$lon, 
+         # Add a new column 'latitudes' and assign the latitude values from the 'location' column
+         latitudes = location$lat) %>% 
+# Remove the 'location' column as it is no longer needed
+select(-location)
+
+# view the zipcode
+glimpse(vehicle_count_by_zip)
+
+```
+## Create the leaflet map
+```{r }
+# Initialize the leaflet map with the given data
+leaflet_map <- leaflet(data = vehicle_count_by_zip) %>%
+  # Add the default OpenStreetMap tiles
+  addTiles() %>%
+  # Set the initial view to the mean longitude and latitude, with a zoom level of 9
+  setView(lng = mean(vehicle_count_by_zip$longitudes), lat = mean(vehicle_count_by_zip$latitudes), zoom = 9) %>%
+  # Add circle markers to the map for each row in the data
+  addCircleMarkers(
+    # Set the longitude and latitude for each marker
+    lng = ~longitudes, lat = ~latitudes,
+    # Set the color of the markers using the 'viridis' palette and the vehicle count values
+    color = ~colorNumeric(palette = "viridis", domain = vehicle_count_by_zip$vehicle_count)(vehicle_count),
+    # Set the radius of the markers based on the square root of the vehicle count, multiplied by 2
+    radius = ~sqrt(vehicle_count) * 2,
+    # Add a label to each marker with information about the postal code, longitude, and vehicle count
+    label = ~paste0("Zip: ", as.character(Postal.Code), "<br>Longitude: ", round(longitudes, 2), "<br>Vehicle Count: ", vehicle_count),
+    # Set the label options to display the label automatically
+    labelOptions = labelOptions(direction = "auto")
+  )
+
+# Display the leaflet map
+leaflet_map
+
+#summary
+#The higher concentration of electric vehicles in areas near King County could be attributed to the presence of tech-savvy people with higher incomes, who are more likely to adopt electric vehicles due to their environmental awareness and lifestyle preferences. Additionally, the city's mild weather can have a positive impact on electric vehicle battery life and performance, making them a more attractive option for residents in the area.
+
+#On the other hand, urban areas and locations close to the sea may have fewer electric vehicles due to a lack of charging infrastructure and concerns about reliability. In these areas, gasoline-powered cars might be perceived as a more dependable choice, especially if charging stations are not easily accessible. It's essential for policymakers and the electric vehicle industry to address these concerns and improve charging infrastructure to encourage further adoption of electric vehicles in these areas.
+
+```
+
+
+
+
+## Create the interactive map
+```{r }
+# Modify the vehicle_count_by_zip dataset to include the Make information
+vehicle_count_by_zip_make <- df_wa %>%
+  group_by(Postal.Code, Make) %>%
+  summarise(vehicle_count = n()) %>%
+  ungroup() %>%
+  na.omit()
+
+# Add geocoding information to the vehicle_count_by_zip_make dataset
+vehicle_count_by_zip_make <- vehicle_count_by_zip_make %>%
+  mutate(location = geocode(as.character(Postal.Code)),
+         longitudes = location$lon,
+         latitudes = location$lat) %>%
+  select(-location)
+
+# Create the interactive map using the plot_ly function from the plotly library
+map_plot <- vehicle_count_by_zip_make %>%
+  plot_ly() %>%
+  add_markers(
+    x = ~longitudes,
+    y = ~latitudes,
+    size = ~vehicle_count,
+    text = ~paste("Zip Code:", Postal.Code, "<br>Vehicle Count:", vehicle_count, "<br>Make:", Make),
+    hoverinfo = "text",
+    marker = list(
+      sizemode = "diameter",
+      line = list(width = 1)
+    )
+  ) %>%
+  layout(
+    title = "Electric Vehicles in Washington State by Zip Code and Make",
+    geo = list(
+      scope = "usa",
+      projection = list(type = "albers usa"),
+      showland = TRUE,
+      landcolor = toRGB("gray95"),
+      countrycolor = toRGB("gray80"),
+      showlakes = TRUE,
+      lakecolor = toRGB("lightskyblue")
+    )
+  )
+
+# Display the interactive map
+map_plot
+
+
+#.This interactive map provides a more detailed view of electric vehicle adoption across Washington State, showing not only the vehicle count by zip code but also the make of the vehicles. This can be helpful in understanding regional preferences for electric vehicle brands and identifying potential areas for targeted marketing or infrastructure improvements.
+```
+## Conclusion
+Based on our analysis of electric vehicle adoption in Washington State, we found that the top 5 cities with the highest EV adoption rate are concentrated in cities. We also identified the top-selling models in these cities and discovered a positive relationship between the model year and electric range, which may encourage more people to switch to electric vehicles as technology continues to improve. The linear regression model we built to predict electric range using model year and electric vehicle type showed moderate performance. Additionally, the interactive maps provided a clear visualization of EV adoption distribution across Washington State.
+
+Understanding the current state of EV adoption can help inform infrastructure planning, such as the placement of charging stations, and guide policy-making to further promote the use of electric vehicles. To accelerate the transition towards a more sustainable transportation system, we suggest that the government consider offering more tax credits for purchasing electric vehicles and focus on building more charging stations in and around urban areas. This analysis can serve as a starting point for further research into the factors driving EV adoption and the potential strategies for encouraging wider adoption of electric vehicles.
+
+
+
